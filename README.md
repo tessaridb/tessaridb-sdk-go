@@ -4,9 +4,11 @@ A client for [TessariDB](https://tessaridb.com) in Go, written from the
 [protocol specification](https://github.com/tessaridb/tessaridb-protocol) and
 nothing else.
 
-> **Status: early.** The value codec is complete and proven against the shared
-> conformance corpus. The connection, the query builder and the HTTP surface are
-> not written yet.
+> **Status: early.** The wire half is in — the value codec, the connection, change
+> subscriptions and the query builder — each proven against the shared conformance
+> corpora and exercised against a running node. The HTTP surface is not written
+> yet, so objects, files, backup and the operational routes are not available from
+> this client. See [What works today](#what-works-today).
 
 ```
 go get github.com/tessaridb/tessaridb-sdk-go
@@ -24,18 +26,62 @@ there is nothing to publish and nothing to reserve.
 
 ## What works today
 
-|                                                    |                                |
-| -------------------------------------------------- | ------------------------------ |
-| value codec — all seventeen types, both directions | **done**, 54/54 corpus vectors |
-| wire connection, greeting, statements, answers     | not yet                        |
-| change subscription                                | not yet                        |
-| query builder                                      | not yet                        |
-| HTTP surface — objects, files, backup, health      | not yet                        |
+|                                                    |                                               |
+| -------------------------------------------------- | --------------------------------------------- |
+| value codec — all seventeen types, both directions | **done**, 54/54 corpus vectors                |
+| wire connection, greeting, statements, answers     | **done**, exercised against a running node    |
+| change subscription                                | **done**, exercised against a running node    |
+| query builder                                      | **done**, 30/30 corpus, 21 executed by a node |
+| HTTP surface — objects, files, backup, health      | not yet                                       |
+| session token — §5.8                               | not yet, and it belongs with the HTTP surface |
 
 ```go
 bytes, err := tessaridb.Encode(tessaridb.Integer{Value: 42})
 back, err := tessaridb.Decode(bytes) // tessaridb.Integer{Value: 42}
 ```
+
+## Writing a statement
+
+The builder covers `SELECT`, `CREATE`, `UPDATE` and `DELETE` over one collection.
+Anything else you write as a script and send as one, which is always available.
+
+```go
+conn, err := tessaridb.Dial("127.0.0.1:9080", nil)
+
+query, err := tessaridb.Select("memories").
+	Field("body").
+	Where(tessaridb.Compare("session", tessaridb.Eq, tessaridb.Text{Value: "abc"})).
+	OrderBy("created", tessaridb.Descending).
+	Limit(50).
+	Render()
+
+// SELECT body FROM memories WHERE session = $p0 ORDER BY created DESC LIMIT 50;
+reply, err := conn.Execute(query.Script, query.Parameters)
+```
+
+**A value you pass never reaches the statement text.** Every one becomes a bound
+parameter; the text carries the reference and the value travels beside it,
+encoded. So a string that spells a statement is stored as a string that spells a
+statement.
+
+Names are the other half of that, and they are not values — a table or field name
+is grammar, so a parameter cannot supply one and it is written into the text
+directly. That is safe only because each is checked first, against a deliberately
+narrow production (`[A-Za-z_][A-Za-z0-9_]*`), and a string that is not a name is
+**refused rather than quoted into acceptance** — quoting would turn your mistake
+into a statement that runs and means something else.
+
+```go
+_, err := tessaridb.Select("memories; DROP COLLECTION memories; --").Render()
+// *tessaridb.BuilderError{Reason: "not-a-name", What: "a table", ...}
+```
+
+A refusal is returned to you rather than sent to the node, because you are here
+now and the node is not. There are exactly two reasons — `not-a-name` and
+`incomplete` — and the builder never invents a third.
+
+Every refusal is captured where it happens and surfaces at `Render`; the first one
+wins, because it is the one you can act on.
 
 ## Values
 
@@ -73,6 +119,12 @@ The comparison used by those tests compares floats **by their bits**, because
 `reflect.DeepEqual` says `NaN != NaN` and says `-0 == 0`, and the protocol
 disagrees with it on both.
 
+The query corpus is the same idea applied to text: the rendering must be
+byte-identical and the parameter numbering must match, so that the same query
+built in any client language is the same statement. Cases the contract says a
+builder must refuse are asserted as refusals, with the stated reason, and are
+never rendered.
+
 ```
 go test ./...    # expects ../tessaridb-protocol checked out beside this repo,
                  # or TESSARI_PROTOCOL_CONFORMANCE pointing at the corpus
@@ -80,6 +132,18 @@ go test ./...    # expects ../tessaridb-protocol checked out beside this repo,
 
 A missing corpus fails loudly rather than skipping: a suite that passes having
 found nothing reports coverage it does not have.
+
+Both of those establish only that two implementations of a written document
+agree. Neither reaches the node's parser — no client may link it — so the suite
+additionally **executes every rendered case against a running node**, which is the
+only check that does:
+
+```
+TESSARIDB_TEST_NODE=127.0.0.1:47915 go test ./...
+```
+
+Those tests are opt-in and skip loudly when the variable is unset; a suite that
+needs a server cannot be the suite that runs on a clean checkout.
 
 ## Licence
 
