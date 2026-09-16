@@ -291,6 +291,22 @@ func positionsOf(t *testing.T, raw json.RawMessage) []Position {
 
 func polygonOf(t *testing.T, raw json.RawMessage) Polygon {
 	t.Helper()
+	// The two corpora spell a polygon differently, and a client translating both
+	// meets it twice. The value corpus names the two parts; the JSON corpus
+	// writes GeoJSON's flat list of rings with the exterior first. Both are read,
+	// because a translator that knew only one would fail a corpus for its
+	// notation rather than this client for its behaviour (Q-GO-001).
+	var flat []json.RawMessage
+	if err := json.Unmarshal(raw, &flat); err == nil {
+		if len(flat) == 0 {
+			return Polygon{}
+		}
+		interiors := make([]Ring, 0, len(flat)-1)
+		for _, ring := range flat[1:] {
+			interiors = append(interiors, positionsOf(t, ring))
+		}
+		return Polygon{Exterior: positionsOf(t, flat[0]), Interiors: interiors}
+	}
 	var p struct {
 		Exterior  json.RawMessage   `json:"exterior"`
 		Interiors []json.RawMessage `json:"interiors"`

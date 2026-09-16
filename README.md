@@ -4,11 +4,11 @@ A client for [TessariDB](https://tessaridb.com) in Go, written from the
 [protocol specification](https://github.com/tessaridb/tessaridb-protocol) and
 nothing else.
 
-> **Status: early.** The wire half is in — the value codec, the connection, change
-> subscriptions and the query builder — each proven against the shared conformance
-> corpora and exercised against a running node. The HTTP surface is not written
-> yet, so objects, files, backup and the operational routes are not available from
-> this client. See [What works today](#what-works-today).
+> **Status: early.** Both transports are in: the value codec, the connection,
+> change subscriptions and the query builder on the wire, and the object, file,
+> backup and operational routes over HTTP. Each is proven against the shared
+> conformance corpora and exercised against a running node — see
+> [What works today](#what-works-today).
 
 ```
 go get github.com/tessaridb/tessaridb-sdk-go
@@ -32,8 +32,10 @@ there is nothing to publish and nothing to reserve.
 | wire connection, greeting, statements, answers     | **done**, exercised against a running node    |
 | change subscription                                | **done**, exercised against a running node    |
 | query builder                                      | **done**, 30/30 corpus, 21 executed by a node |
-| HTTP surface — objects, files, backup, health      | not yet                                       |
-| session token — §5.8                               | not yet, and it belongs with the HTTP surface |
+| HTTP surface — objects, files, backup, health      | **done**, exercised against a running node    |
+| JSON values and outcomes — §5.6, §5.7              | **done**, 58/59 values, 20/20 outcomes        |
+| session token — §5.8                               | **done**, open once, `Bearer` thereafter      |
+| `/watch`, `/metrics`, `POST /password`             | not yet                                       |
 
 ```go
 bytes, err := tessaridb.Encode(tessaridb.Integer{Value: 42})
@@ -82,6 +84,92 @@ now and the node is not. There are exactly two reasons — `not-a-name` and
 
 Every refusal is captured where it happens and surfaces at `Render`; the first one
 wins, because it is the one you can act on.
+
+## Objects, files and health
+
+Everything the wire protocol does not serve is here, and it is a different client
+because it is a different surface rather than an alternative to the first one.
+
+```go
+node := tessaridb.NewHTTPClient("127.0.0.1:8000", &tessaridb.Credentials{
+	User:     "app",
+	Password: os.Getenv("TESSARIDB_PASSWORD"),
+})
+
+err := node.Put("acme", "app", "uploads", "reports/100% done.pdf", content)
+back, err := node.Get("acme", "app", "uploads", "reports/100% done.pdf")
+listing, err := node.List("acme", "app", "uploads")
+condition, err := node.Health()
+```
+
+**The password is spent once.** A node verifies Basic with Argon2id at the OWASP
+floor, and HTTP has no connection to hang a session on, so that cost is paid on
+_every_ request that carries one. This client opens a session on its first
+authenticated call and presents the token after — and when a token stops working,
+which it does four different ways that all answer `401`, it signs in again and
+retries once, without the caller seeing it.
+
+A client that skipped this would be correct, would pass every test, and would be
+slower than the protocol intends by more than an order of magnitude. Measured
+here against a release build over loopback, on a statement that does nothing:
+**15.8 ms per request with a password against 0.24 ms with a token**, 65×.
+
+**`node.Script()` takes no parameters, and that is deliberate.** A parameter on
+this route is a JSON string carrying _TessariQL source_, not a value —
+`{"x":"3"}` is the number 3 and `{"x":"hello"}` is a `400`. Passing a caller's
+string through would be a type-confusion hazard that no test written against it
+would show, so this client does not build the bridge: a statement with a value in
+it goes over the wire, where a parameter is an encoded value and none of this
+arises.
+
+**A `404` is an answer.** A file that is not there reads as a `nil` slice with no
+error, and a file that exists and is empty reads as zero bytes — these are
+different facts and the server draws the line, so this client does not erase it.
+A listing that comes back `nil` means the name is not a bucket; an empty listing
+means the bucket is there and holds nothing.
+
+`HEAD` is deliberately not offered rather than pending. The node reads the whole
+object and discards the body, so it costs the server exactly what a `GET` costs;
+presenting it as a cheap `exists()` would be an invitation to call it in a loop.
+
+## A value read over HTTP needs its kind
+
+JSON has six types and the store has seventeen, so §5.7 is a decision rather than
+a translation: for most of the table the type is **not recoverable from the JSON
+alone**. `"12.34"` is a decimal or a string, `"1h30m"` is a duration or a string,
+and `users:7` is the integer 7 or the text `'7'`.
+
+So the reader is told, and a caller reads the kind from the field's declaration
+in the catalog:
+
+```go
+results, err := node.Script("USE NAMESPACE acme; USE DATABASE app; RETURN 1;")
+outcome, err := tessaridb.ReadOutcome(results[2], tessaridb.Reading{
+	Value: tessaridb.IntegerKind{},
+})
+```
+
+A reader that guessed instead would be right most of the time, which is worse
+than being wrong all of it. If you need types without carrying a catalog, use the
+wire protocol, where every value carries its tag.
+
+One spelling stays lossy even with the kind supplied, and this client says so
+rather than papering over it: a float `-0.0` is written `0`, because the value is
+normalised before it is written. No reader can tell it from `+0.0`.
+
+**A record identity is a string here and is not parsed back.** `users:7` is the
+integer 7 and the text `'7'` written identically, and the conformance corpus
+carries one `keys` outcome holding `"1"` beside `"ada"` — an integer identity and
+a text one in a single array, which no declared kind could cover. It is an
+identifier to display, log and pass back; a caller that needs its type reads the
+identity off the wire, where it carries its tag.
+
+## There is no TLS on either transport
+
+Credentials travel as given, and so does the session token — it is a bearer
+credential in the literal sense. Run this on a protected network, or behind
+something that terminates TLS. This is a property of the protocol, not an
+omission in the client, and it is stated here rather than left to be discovered.
 
 ## Values
 
@@ -139,11 +227,20 @@ additionally **executes every rendered case against a running node**, which is t
 only check that does:
 
 ```
-TESSARIDB_TEST_NODE=127.0.0.1:47915 go test ./...
+TESSARIDB_TEST_NODE=127.0.0.1:47915 \
+TESSARIDB_TEST_HTTP=127.0.0.1:47916 go test ./...
 ```
 
-Those tests are opt-in and skip loudly when the variable is unset; a suite that
-needs a server cannot be the suite that runs on a clean checkout.
+Those tests are opt-in and skip loudly when the variables are unset; a suite that
+needs a server cannot be the suite that runs on a clean checkout. The session
+tests additionally need a store with a user declared, because that is the only
+thing that makes a token exist at all.
+
+The JSON corpus is decode-only, and it says why: a client never encodes a value
+on this surface, since a `/script` parameter carries TessariQL source rather than
+JSON. So it is weaker than the value corpus by construction — there is no writer
+for a wrong reader to agree with — and what it does catch is every place the JSON
+is lossy and the declared kind is what restores the value.
 
 ## Licence
 
