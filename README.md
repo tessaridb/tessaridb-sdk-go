@@ -31,7 +31,7 @@ there is nothing to publish and nothing to reserve.
 | value codec — all seventeen types, both directions | **done**, 54/54 corpus vectors                |
 | wire connection, greeting, statements, answers     | **done**, exercised against a running node    |
 | change subscription                                | **done**, exercised against a running node    |
-| query builder                                      | **done**, 30/30 corpus, 21 executed by a node |
+| query builder                                      | **done**, 38/38 corpus, 26 executed by a node |
 | HTTP surface — objects, files, backup, health      | **done**, exercised against a running node    |
 | JSON values and outcomes — §5.6, §5.7              | **done**, 58/59 values, 20/20 outcomes        |
 | session token — §5.8                               | **done**, open once, `Bearer` thereafter      |
