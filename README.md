@@ -61,6 +61,23 @@ query, err := tessaridb.Select("memories").
 reply, err := conn.Execute(query.Script, query.Parameters)
 ```
 
+On a cluster, two more clauses say **which node may answer** rather than what the
+answer holds:
+
+```go
+query, err := tessaridb.Select("orders").
+	Staleness("30s").        // no node further behind than this may answer
+	AnsweredBy("LEADER").    // and it must be the node that decides writes
+	Render()
+
+// SELECT * FROM orders STALENESS 30s ANSWERED BY LEADER;
+```
+
+They are separate controls rather than one: a follower at zero lag is *level*,
+not authoritative. A bound tighter than the cluster can know about itself is
+refused **by the node**, and the refusal names the floor — this client checks the
+shape of a span and never its value, because the floor belongs to the cluster.
+
 **A value you pass never reaches the statement text.** Every one becomes a bound
 parameter; the text carries the reference and the value travels beside it,
 encoded. So a string that spells a statement is stored as a string that spells a
