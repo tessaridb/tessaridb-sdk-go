@@ -48,6 +48,9 @@ type SelectStatement struct {
 	limit   uint64
 	hasFrom bool // START given
 	hasCap  bool // LIMIT given
+
+	staleness  string
+	answeredBy string
 }
 
 // Select reads from one collection. Every clause is optional.
@@ -98,6 +101,35 @@ func (s *SelectStatement) Start(n uint64) *SelectStatement {
 
 func (s *SelectStatement) Limit(n uint64) *SelectStatement {
 	s.limit, s.hasCap = n, true
+	return s
+}
+
+// Staleness says how far behind the node answering this read may be — "30s",
+// "1m30s".
+//
+// A candidate filter and never a marker: it says which nodes may answer at all,
+// rather than labelling an answer as stale. A read no node can satisfy is
+// refused by the node rather than quietly promoted to the one that can.
+func (s *SelectStatement) Staleness(bound string) *SelectStatement {
+	if err := checkSpan(bound); err != nil {
+		s.fail(err)
+		return s
+	}
+	s.staleness = bound
+	return s
+}
+
+// AnsweredBy says where the answer must come from: "ANY" or "LEADER".
+//
+// Not a tighter Staleness. A follower at zero lag is LEVEL, not authoritative,
+// so no freshness bound expresses "this must come from where writes are
+// decided".
+func (s *SelectStatement) AnsweredBy(who string) *SelectStatement {
+	if err := checkAnswerer(who); err != nil {
+		s.fail(err)
+		return s
+	}
+	s.answeredBy = who
 	return s
 }
 
@@ -153,6 +185,14 @@ func (s *SelectStatement) Render() (Rendered, error) {
 	}
 	if s.hasCap {
 		fmt.Fprintf(&out, " LIMIT %d", s.limit)
+	}
+	// Both come after LIMIT, and STALENESS before ANSWERED BY, because a node's
+	// parser accepts no other sequence.
+	if s.staleness != "" {
+		out.WriteString(" STALENESS " + s.staleness)
+	}
+	if s.answeredBy != "" {
+		out.WriteString(" ANSWERED BY " + s.answeredBy)
 	}
 	out.WriteByte(';')
 	return Rendered{Script: out.String(), Parameters: b.parameters}, nil

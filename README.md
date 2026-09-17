@@ -31,7 +31,7 @@ there is nothing to publish and nothing to reserve.
 | value codec — all seventeen types, both directions | **done**, 54/54 corpus vectors                |
 | wire connection, greeting, statements, answers     | **done**, exercised against a running node    |
 | change subscription                                | **done**, exercised against a running node    |
-| query builder                                      | **done**, 30/30 corpus, 21 executed by a node |
+| query builder                                      | **done**, 38/38 corpus, 26 executed by a node |
 | HTTP surface — objects, files, backup, health      | **done**, exercised against a running node    |
 | JSON values and outcomes — §5.6, §5.7              | **done**, 58/59 values, 20/20 outcomes        |
 | session token — §5.8                               | **done**, open once, `Bearer` thereafter      |
@@ -60,6 +60,23 @@ query, err := tessaridb.Select("memories").
 // SELECT body FROM memories WHERE session = $p0 ORDER BY created DESC LIMIT 50;
 reply, err := conn.Execute(query.Script, query.Parameters)
 ```
+
+On a cluster, two more clauses say **which node may answer** rather than what the
+answer holds:
+
+```go
+query, err := tessaridb.Select("orders").
+	Staleness("30s").        // no node further behind than this may answer
+	AnsweredBy("LEADER").    // and it must be the node that decides writes
+	Render()
+
+// SELECT * FROM orders STALENESS 30s ANSWERED BY LEADER;
+```
+
+They are separate controls rather than one: a follower at zero lag is *level*,
+not authoritative. A bound tighter than the cluster can know about itself is
+refused **by the node**, and the refusal names the floor — this client checks the
+shape of a span and never its value, because the floor belongs to the cluster.
 
 **A value you pass never reaches the statement text.** Every one becomes a bound
 parameter; the text carries the reference and the value travels beside it,

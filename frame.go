@@ -45,6 +45,23 @@ var ErrUnknownFrame = errors.New("tessaridb: unknown frame kind")
 // hanging up and the other is the peer dying.
 var ErrTruncated = errors.New("tessaridb: the peer stopped in the middle of a frame")
 
+// ErrNotThisProtocol is returned when the peer's greeting does not carry the
+// magic — the address reaches something, and it is not a node.
+//
+// A sentinel rather than a formatted string because the protocol asks a client
+// to keep ten classes APART, and a class a caller cannot match with errors.Is
+// has been kept apart only in the message. The remedy here is to fix the
+// address, which is nothing like the remedy for any transport failure.
+var ErrNotThisProtocol = errors.New("tessaridb: the peer is not speaking this protocol")
+
+// ErrWrongVersion is returned when the peer's major differs from this client's.
+//
+// A differing MAJOR is a refusal and a differing minor is not: the minor exists
+// so that a node and a client may disagree about it and still talk. The remedy
+// is to upgrade one side, and the message names both numbers so a caller knows
+// which.
+var ErrWrongVersion = errors.New("tessaridb: the peer speaks a different major version")
+
 var (
 	magic = [4]byte{'T', 'E', 'S', 'S'}
 	// The version this client speaks.
@@ -82,13 +99,11 @@ func readGreeting(r io.Reader) error {
 		return fmt.Errorf("tessaridb: no greeting from the peer: %w", err)
 	}
 	if !bytes.Equal(head[:4], magic[:]) {
-		return fmt.Errorf("tessaridb: the peer is not speaking this protocol (magic %q)", head[:4])
+		return fmt.Errorf("%w (magic %q)", ErrNotThisProtocol, head[:4])
 	}
 	if head[4] != major {
-		// A differing major is a refusal. A differing minor is not: the minor
-		// exists so that a node and a client may disagree about it and still
-		// talk.
-		return fmt.Errorf("tessaridb: the peer speaks major %d and this client speaks %d", head[4], major)
+		return fmt.Errorf("%w: it speaks major %d and this client speaks %d",
+			ErrWrongVersion, head[4], major)
 	}
 	return nil
 }

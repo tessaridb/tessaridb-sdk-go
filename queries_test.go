@@ -105,6 +105,9 @@ func selectOf(t *testing.T, body json.RawMessage) built {
 		Order  [][]string        `json:"order"`
 		Start  *uint64           `json:"start"`
 		Limit  *uint64           `json:"limit"`
+
+		Staleness  string `json:"staleness"`
+		AnsweredBy string `json:"answered_by"`
 	}
 	if err := json.Unmarshal(body, &s); err != nil {
 		t.Fatalf("a select: %v", err)
@@ -143,6 +146,12 @@ func selectOf(t *testing.T, body json.RawMessage) built {
 	}
 	if s.Limit != nil {
 		statement.Limit(*s.Limit)
+	}
+	if s.Staleness != "" {
+		statement.Staleness(s.Staleness)
+	}
+	if s.AnsweredBy != "" {
+		statement.AnsweredBy(s.AnsweredBy)
 	}
 	return statement
 }

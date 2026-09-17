@@ -1,6 +1,9 @@
 package tessaridb
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Building a statement.
 //
@@ -15,8 +18,8 @@ import "strconv"
 // directly, and that is safe only because the check stands in front of the
 // interpolation rather than somewhere else.
 
-// RefusalReason is why a builder would not render. There are two, they are the
-// shared contract's own vocabulary, and a builder never invents a third.
+// RefusalReason is why a builder would not render. They are the shared
+// contract's own vocabulary, and a builder never invents one of its own.
 type RefusalReason string
 
 const (
@@ -25,6 +28,11 @@ const (
 	// Incomplete: a statement that cannot be rendered at all, such as a CREATE
 	// with no fields.
 	Incomplete RefusalReason = "incomplete"
+	// NotASpan: a STALENESS bound that is not digits followed by one of the
+	// node's eight units.
+	NotASpan RefusalReason = "not-a-span"
+	// NotAnAnswerer: an ANSWERED BY that is neither ANY nor LEADER.
+	NotAnAnswerer RefusalReason = "not-an-answerer"
 )
 
 // The grammatical positions a name can occupy, as the contract words them.
@@ -44,10 +52,69 @@ type BuilderError struct {
 }
 
 func (e *BuilderError) Error() string {
-	if e.Reason == Incomplete {
+	switch e.Reason {
+	case Incomplete:
 		return "tessaridb: a statement with no fields cannot be rendered"
+	case NotASpan:
+		return "tessaridb: " + strconv.Quote(e.Name) +
+			" is not a span — write digits and one of ns, us, ms, s, m, h, d, w, as in \"30s\""
+	case NotAnAnswerer:
+		return "tessaridb: " + strconv.Quote(e.Name) + " is not an answerer — write ANY or LEADER"
 	}
 	return "tessaridb: " + strconv.Quote(e.Name) + " is not a name, in " + e.What
+}
+
+// spanUnits are the node's own eight, longest first so "ms" is read before "m".
+var spanUnits = []string{"ms", "ns", "us", "s", "m", "h", "d", "w"}
+
+// checkSpan holds the contract's span production: 1*( 1*DIGIT unit ).
+//
+// A span is written into the statement TEXT rather than bound, because a node
+// refuses a parameter in that position. This check is therefore what keeps the
+// guarantee that a caller's characters never reach a script unexamined.
+//
+// The VALUE is never judged here. A bound tighter than the cluster's floor is
+// the node's refusal to make and its message names the floor; a client that
+// guessed would be wrong on the next cluster.
+func checkSpan(text string) error {
+	rest, seen := text, false
+	for len(rest) > 0 {
+		digits := 0
+		for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+			digits++
+		}
+		if digits == 0 {
+			return &BuilderError{Reason: NotASpan, Name: text}
+		}
+		rest = rest[digits:]
+		matched := ""
+		for _, unit := range spanUnits {
+			if strings.HasPrefix(rest, unit) {
+				matched = unit
+				break
+			}
+		}
+		if matched == "" {
+			return &BuilderError{Reason: NotASpan, Name: text}
+		}
+		rest = rest[len(matched):]
+		seen = true
+	}
+	if !seen {
+		return &BuilderError{Reason: NotASpan, Name: text}
+	}
+	return nil
+}
+
+// checkAnswerer holds ANY or LEADER, and no third. The direction a guess fails
+// in is the unsafe one: somebody writing MASTER means the leader, and passing an
+// unrecognised word through would have the read answered by whatever copy came
+// first.
+func checkAnswerer(word string) error {
+	if word != "ANY" && word != "LEADER" {
+		return &BuilderError{Reason: NotAnAnswerer, Name: word}
+	}
+	return nil
 }
 
 // checkName holds the contract's production: a letter or underscore, then
