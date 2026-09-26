@@ -441,3 +441,27 @@ func TestNanosecondsOutsideTheSubSecondRangeAreAnErrorNotAWrap(t *testing.T) {
 		t.Fatal("a nanosecond count at the ceiling must be refused")
 	}
 }
+
+// removedChange is a §3.8 body for a removed record, with an optional cursor.
+func removedChange(cursor string) []byte {
+	w := &writer{}
+	w.u64(7)
+	w.text("orders")
+	w.text("orders:1")
+	w.u8(1)
+	if cursor != "" {
+		w.text(cursor)
+	}
+	return w.buf
+}
+
+func TestAChangeFromASplitTableCarriesItsCursor(t *testing.T) {
+	plain, err := readChange(removedChange(""))
+	if err != nil || plain.Cursor != "" || !plain.Removed {
+		t.Fatalf("plain change: %+v, %v", plain, err)
+	}
+	split, err := readChange(removedChange("0:7,2:3"))
+	if err != nil || split.Cursor != "0:7,2:3" || split.Sequence != 7 {
+		t.Fatalf("split change: %+v, %v", split, err)
+	}
+}
