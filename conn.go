@@ -181,6 +181,10 @@ type Change struct {
 	Identity string
 	Removed  bool
 	Value    Value
+	// Cursor is set on a feed over a split table: where to resume after this
+	// change, passed back to ChangesAt. Its logs count separately, so no one
+	// Sequence says where such a feed was. Empty on every other feed.
+	Cursor string
 }
 
 // Changes subscribes this connection to the change stream.
@@ -203,7 +207,23 @@ func (c *Conn) Changes(resumeAfter uint64, fromStart bool, table string) (<-chan
 	if fromStart {
 		from = 0
 	}
+	return c.subscribe(from, table, "")
+}
 
+// ChangesAt resumes a feed over a split table after the change that carried
+// cursor (Change.Cursor), sent back as it came. The node resumes after that
+// change, so no arithmetic is owed. It consumes the connection like Changes.
+func (c *Conn) ChangesAt(cursor string, table string) (<-chan Change, <-chan error, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.subscribed {
+		return nil, nil, errors.New("tessaridb: this connection is already subscribed")
+	}
+	return c.subscribe(0, table, cursor)
+}
+
+// subscribe sends the Subscribe frame and starts delivering. The caller holds mu.
+func (c *Conn) subscribe(from uint64, table string, cursor string) (<-chan Change, <-chan error, error) {
 	w := &writer{}
 	w.u64(from)
 	if table == "" {
@@ -211,6 +231,11 @@ func (c *Conn) Changes(resumeAfter uint64, fromStart bool, table string) (<-chan
 	} else {
 		w.u8(1)
 		w.text(table)
+	}
+	// Last and only when present (§3.7): without it this is the frame every
+	// earlier node reads.
+	if cursor != "" {
+		w.text(cursor)
 	}
 	if err := writeFrame(c.conn, frameSubscribe, w.buf); err != nil {
 		return nil, nil, err
@@ -265,19 +290,28 @@ func readChange(body []byte) (Change, error) {
 	if err != nil {
 		return Change{}, err
 	}
+	change := Change{Sequence: sequence, Table: table, Identity: identity}
 	switch fate {
 	case 1:
-		return Change{Sequence: sequence, Table: table, Identity: identity, Removed: true}, nil
+		change.Removed = true
 	case 0:
 		payload, err := r.lenbytes("a change value")
 		if err != nil {
 			return Change{}, err
 		}
-		value, err := Decode(payload)
-		return Change{Sequence: sequence, Table: table, Identity: identity, Value: value}, err
+		if change.Value, err = Decode(payload); err != nil {
+			return Change{}, err
+		}
 	default:
 		return Change{}, protocolf("a change fate byte of %d", fate)
 	}
+	// §3.8: bytes after the change are its cursor; none means the feed has none.
+	if r.remaining() > 0 {
+		if change.Cursor, err = r.text("a change cursor"); err != nil {
+			return Change{}, err
+		}
+	}
+	return change, nil
 }
 
 func readElsewhere(body []byte) (*Redirect, error) {
