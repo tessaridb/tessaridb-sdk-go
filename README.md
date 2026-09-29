@@ -116,6 +116,40 @@ now and the node is not. There are exactly two reasons — `not-a-name` and
 Every refusal is captured where it happens and surfaces at `Render`; the first one
 wins, because it is the one you can act on.
 
+## Consuming a topic
+
+A topic's consumer group (`DEFINE GROUP`, engine `0.12.0-beta` or later) hands
+each message to one member and forgets it only when it is acknowledged.
+`Consumer` reads under a group and calls your function once per message, in
+order, until its context is done:
+
+```go
+conn, err := tessaridb.Dial("127.0.0.1:9080", nil)
+consumer, err := tessaridb.NewConsumer(conn, "app", "main", "jobs", "workers")
+
+ctx, stop := context.WithCancel(context.Background())
+defer stop() // calling stop() from anywhere ends the loop
+
+// Automatic: nil acknowledges the message, an error hands it back at once.
+err = consumer.RunAuto(ctx, func(ctx context.Context, m tessaridb.Message) error {
+	fmt.Println(m.Position, m.Deliveries, m.Value)
+	return nil
+})
+
+// Manual: return tessaridb.Ack{}, tessaridb.Nack{Delay: 5 * time.Second}, or
+// tessaridb.Leave{} for the group's deadline to hand it out again.
+err = consumer.RunManual(ctx, func(ctx context.Context, m tessaridb.Message) tessaridb.Settle {
+	return tessaridb.Ack{}
+})
+```
+
+When the context is done the running handler finishes, its acknowledgement is
+sent, and the loop returns `nil`. Both modes are **at least once**: make an
+effect outside the store idempotent, keyed by the topic, the group and
+`m.Position`. The group, not the connection, holds the state, and it is declared
+in the store rather than by the consumer. The behaviour is the protocol
+repository's `spec/consumer-v1.md`, which every client follows.
+
 ## Objects, files and health
 
 Everything the wire protocol does not serve is here, and it is a different client
