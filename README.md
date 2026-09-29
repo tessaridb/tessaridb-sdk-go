@@ -152,6 +152,40 @@ repository's `spec/consumer-v1.md`, which every client follows, and the
 statements it sends are checked against all 14 cases of
 `conformance/consumer-v1.json`.
 
+## A space as a cache, a counter and a lock
+
+A space (`DEFINE SPACE`) keeps one value per key with an optional expiry.
+`Cache` makes each use one call over a connection you hold; a ttl of zero means
+no expiry:
+
+```go
+cache, err := tessaridb.NewCache(conn, "app", "main", "cache")
+if err != nil {
+	return err
+}
+if err := cache.Set("session:abc", tessaridb.Text{Value: "ada"}, 30*time.Minute); err != nil {
+	return err
+}
+page, err := cache.GetOrSet("page:/", time.Minute, func() (tessaridb.Value, error) {
+	return tessaridb.Text{Value: "<html>…"}, nil
+})
+hits, err := cache.Incr("hits", 1)
+
+lease, err := cache.Lock("nightly-report", 30*time.Second, "")
+if err == nil && lease != nil {
+	// … work, calling lease.Extend(0) before 30 s pass
+	_, err = lease.Release()
+}
+```
+
+Two rules the type is built around: **a plain `Set` clears an expiry the key
+had** — pass the ttl on every write that must keep one — and **a lock is a
+lease, not a mutex**: past its ttl another holder may take it. `Release` is an
+expiring conditional write, never a delete, so a lease that lapsed cannot remove
+the next holder's lock. `TTL` keeps the store's two absences apart:
+`TTLExpires`, `TTLNever`, `TTLAbsent`. The statements are the protocol
+repository's `spec/cache-v1.md`, which every client follows.
+
 ## Objects, files and health
 
 Everything the wire protocol does not serve is here, and it is a different client
