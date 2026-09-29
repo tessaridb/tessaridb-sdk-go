@@ -15,8 +15,6 @@ package tessaridb
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -56,31 +54,9 @@ func (Leave) isSettle() {}
 // Consumer is a member of a consumer group reading one topic over one
 // connection. Like Conn, it is not safe for concurrent use.
 type Consumer struct {
-	conn *Conn
-	// Sent with every statement: a connection that reconnected has forgotten
-	// any earlier USE (§5).
-	tenancy string
-	topic   string
-	group   string
-	batch   int
-}
-
-// isGroupName holds §3's pattern: the group is a quoted literal the grammar
-// does not take as a parameter, so it is checked and never escaped.
-func isGroupName(name string) bool {
-	if len(name) == 0 || len(name) > 128 {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case 'A' <= c && c <= 'Z', 'a' <= c && c <= 'z', '0' <= c && c <= '9':
-		case c == '_', c == '.', c == ':', c == '-':
-		default:
-			return false
-		}
-	}
-	return true
+	conn       *Conn
+	statements consumerStatements
+	batch      int
 }
 
 // NewConsumer is a member of group reading topic in namespace/database. The
@@ -88,21 +64,11 @@ func isGroupName(name string) bool {
 // wire connection proves who it is once and keeps that identity. Names are
 // checked before anything is sent and refused with a *BuilderError.
 func NewConsumer(conn *Conn, namespace, database, topic, group string) (*Consumer, error) {
-	for _, each := range [][2]string{{"a namespace", namespace}, {"a database", database}, {"a topic", topic}} {
-		if err := checkName(each[0], each[1]); err != nil {
-			return nil, err
-		}
+	statements, err := newConsumerStatements(namespace, database, topic, group)
+	if err != nil {
+		return nil, err
 	}
-	if !isGroupName(group) {
-		return nil, &BuilderError{Reason: NotAName, What: "a group", Name: group}
-	}
-	return &Consumer{
-		conn:    conn,
-		tenancy: "USE NAMESPACE " + namespace + "; USE DATABASE " + database + "; ",
-		topic:   topic,
-		group:   group,
-		batch:   10,
-	}, nil
+	return &Consumer{conn: conn, statements: statements, batch: 10}, nil
 }
 
 // Batch asks for up to n messages per read (at least one).
@@ -160,36 +126,26 @@ func (c *Consumer) run(ctx context.Context, each func(Message) error) error {
 // Ack acknowledges these positions and answers how many were in flight. A
 // position that was not counts nothing and is not an error.
 func (c *Consumer) Ack(positions ...uint64) (uint64, error) {
-	return c.settle("ACK "+c.topic+" FOR CONSUMER '"+c.group+"' AT ", positions, "")
+	if len(positions) == 0 {
+		return 0, nil
+	}
+	return c.settle(c.statements.ack(positions))
 }
 
 // Nack hands these positions back, now or after delay, and answers how many
 // were in flight.
 func (c *Consumer) Nack(delay time.Duration, positions ...uint64) (uint64, error) {
-	// A delay is a duration literal in the grammar, not a parameter, written
-	// from a number formatted here and never from a caller's text.
-	tail := ""
-	if millis := delay.Milliseconds(); millis > 0 {
-		tail = " DELAY " + strconv.FormatInt(millis, 10) + "ms"
-	}
-	return c.settle("NACK "+c.topic+" FOR CONSUMER '"+c.group+"' AT ", positions, tail)
-}
-
-func (c *Consumer) settle(statement string, positions []uint64, tail string) (uint64, error) {
 	if len(positions) == 0 {
 		return 0, nil
 	}
-	parameters := make(map[string]Value, len(positions))
-	references := make([]string, len(positions))
-	for i, position := range positions {
-		if position > 1<<63-1 {
-			return 0, fmt.Errorf("tessaridb: position %d is past what the store counts", position)
-		}
-		name := "p" + strconv.Itoa(i)
-		parameters[name] = Integer{Value: int64(position)}
-		references[i] = "$" + name
+	return c.settle(c.statements.nack(delay, positions))
+}
+
+func (c *Consumer) settle(script string, parameters map[string]Value, err error) (uint64, error) {
+	if err != nil {
+		return 0, err
 	}
-	reply, err := c.conn.Execute(c.tenancy+statement+strings.Join(references, ", ")+tail+";", parameters)
+	reply, err := c.conn.Execute(script, parameters)
 	if err != nil {
 		return 0, err
 	}
@@ -205,8 +161,7 @@ func (c *Consumer) settle(statement string, positions []uint64, tail string) (ui
 func (c *Consumer) next(ctx context.Context) ([]Message, error) {
 	wait := consumerFirstWait
 	for ctx.Err() == nil {
-		reply, err := c.conn.Execute(
-			c.tenancy+"READ FROM "+c.topic+" FOR CONSUMER '"+c.group+"' LIMIT "+strconv.Itoa(c.batch)+";", nil)
+		reply, err := c.conn.Execute(c.statements.read(c.batch), nil)
 		if err != nil {
 			return nil, err
 		}
