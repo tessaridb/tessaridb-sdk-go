@@ -127,7 +127,8 @@ order, until its context is done:
 conn, err := tessaridb.Dial("127.0.0.1:9080", nil)
 consumer, err := tessaridb.NewConsumer(conn, "app", "main", "jobs", "workers")
 
-ctx, stop := context.WithCancel(context.Background()) // stop() ends the loop
+ctx, stop := context.WithCancel(context.Background())
+defer stop() // calling stop() from anywhere ends the loop
 
 // Automatic: nil acknowledges the message, an error hands it back at once.
 err = consumer.RunAuto(ctx, func(ctx context.Context, m tessaridb.Message) error {
