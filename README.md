@@ -189,6 +189,25 @@ would show, so this client does not build the bridge: a statement with a value i
 it goes over the wire, where a parameter is an encoded value and none of this
 arises.
 
+**A batch of events goes to a series in one transaction** (node `0.14.0-beta`,
+§5.9). `Append` takes `Object` values, renders them as TessariQL source — the one
+place this client does, because the route reads nothing else — and answers how
+many landed:
+
+```go
+landed, err := node.Append("acme", "metrics", "readings", []tessaridb.Value{
+	tessaridb.Object{Fields: map[string]tessaridb.Value{
+		"sensor": tessaridb.Text{Value: "s1"},
+		"at":     tessaridb.Datetime{Seconds: 1_790_676_000},
+	}},
+})
+```
+
+The batch lands whole or not at all, and it is sent **once**: it is not idempotent,
+so a transport failure after the request left is the caller's to judge. A kind an
+event cannot carry — bytes, a range, a non-finite float — returns a
+`*NotAnEventError` before anything is sent.
+
 **A `404` is an answer.** A file that is not there reads as a `nil` slice with no
 error, and a file that exists and is empty reads as zero bytes — these are
 different facts and the server draws the line, so this client does not erase it.

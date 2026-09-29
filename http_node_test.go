@@ -1,9 +1,12 @@
 package tessaridb
 
 import (
+	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The HTTP surface against a running node.
@@ -270,5 +273,53 @@ func TestAWrongPasswordSurfacesTheRefusalRatherThanLooping(t *testing.T) {
 	refused, ok := err.(*HTTPError)
 	if !ok || refused.Status != 401 {
 		t.Fatalf("want a 401, got %v", err)
+	}
+}
+
+// §5.9 against the node, which is the oracle for the rendering: a value this
+// client spelled wrongly fails the batch or comes back different.
+func TestABatchOfEventsLandsWholeInEventTimeOrderOrNotAtAll(t *testing.T) {
+	node := httpNode(t)
+	if _, err := node.Script(httpFixture + " DEFINE SERIES IF NOT EXISTS readings RETAIN 36500d TIME at;"); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	run := strconv.FormatInt(time.Now().UnixNano(), 36)
+	event := func(second int64, sensor string) Value {
+		return Object{Fields: map[string]Value{
+			"run":    Text{Value: run},
+			"sensor": Text{Value: sensor},
+			"v":      Float{Value: 1.5e300},
+			"note":   Text{Value: `it's \ fine`},
+			"at":     Datetime{Seconds: 1_790_676_000 + second},
+		}}
+	}
+	landed, err := node.Append("gocorpus", "app", "readings", []Value{event(2, "b"), event(1, "a")})
+	if err != nil || landed != 2 {
+		t.Fatalf("append: %d, %v", landed, err)
+	}
+	var refused *HTTPError
+	if _, err := node.Append("gocorpus", "app", "readings",
+		[]Value{event(3, "c"), Object{Fields: map[string]Value{}}}); !errors.As(err, &refused) || refused.Status != 400 {
+		t.Fatalf("an event with no time fails the batch with 400, got %v", err)
+	}
+	results, err := node.Script(use + " SELECT sensor, note FROM readings WHERE run = '" + run + "';")
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	outcome, err := ReadOutcome(results[len(results)-1], Reading{Value: ObjectKind{
+		Fields: map[string]Kind{"sensor": StringKind{}, "note": StringKind{}},
+	}})
+	if err != nil {
+		t.Fatalf("records: %v", err)
+	}
+	records, ok := outcome.(ScriptRecords)
+	if !ok || len(records.Rows) != 2 {
+		t.Fatalf("two events, got %#v", outcome)
+	}
+	for position, want := range []string{"a", "b"} {
+		fields := records.Rows[position].Value.(Object).Fields
+		if fields["sensor"] != (Text{Value: want}) || fields["note"] != (Text{Value: `it's \ fine`}) {
+			t.Fatalf("row %d: %#v", position, fields)
+		}
 	}
 }
