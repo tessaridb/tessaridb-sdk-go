@@ -57,6 +57,7 @@ type Conn struct {
 	credentials *Credentials
 	spent       bool
 	subscribed  bool
+	peerMinor   byte
 	mu          sync.Mutex
 }
 
@@ -81,10 +82,12 @@ func Dial(address string, credentials *Credentials) (*Conn, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("tessaridb: sending the greeting: %w", err)
 	}
-	if err := readGreeting(c.r); err != nil {
+	peerMinor, err := readGreeting(c.r)
+	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
+	c.peerMinor = peerMinor
 	return c, nil
 }
 

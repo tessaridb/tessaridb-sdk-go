@@ -24,7 +24,8 @@ This client's version is **its own** and never tracks the engine's. A fix here
 would otherwise force an invented engine release, and an engine release would
 force five invented client releases.
 
-What has to match is the **protocol**. This release speaks **protocol 1.1** and
+What has to match is the **protocol**. This release speaks **protocol 1.1**, plus the vault frame of **1.2**, which it
+sends only to a node that announces minor 2 (node `0.17.0-beta` and later), and
 connects to any node of protocol **major 1**, which is checked in the greeting
 before anything else is sent — a differing major is refused there rather than
 discovered mid-conversation, where it arrives as a decode failure that reads
@@ -185,6 +186,34 @@ expiring conditional write, never a delete, so a lease that lapsed cannot remove
 the next holder's lock. `TTL` keeps the store's two absences apart:
 `TTLExpires`, `TTLNever`, `TTLAbsent`. The statements are the protocol
 repository's `spec/cache-v1.md`, which every client follows.
+
+## A vault, and its passphrase
+
+A vault (`DEFINE VAULT`) keeps `SECRET` fields encrypted in every copy that is not a
+running, unsealed node. The passphrase goes in a frame of its own, never in a
+statement, and is in no error this package returns:
+
+```go
+if _, err := conn.Unseal(storePassphrase); err != nil { // the store's key, for ten minutes
+	return err
+}
+vault, err := tessaridb.NewVault(conn, "app", "main", "team")
+if err != nil {
+	return err
+}
+id := tessaridb.Text{Value: "github"}
+err = vault.Write(id, map[string]tessaridb.Value{"password": tessaridb.Text{Value: "hunter2"}})
+page, err := vault.List(nil, 100)                // ids only, never a value
+secret, err := vault.Reveal(id, "password")
+```
+
+A vault declared `DEFINE VAULT team PASSPHRASE '…'` opens with its own passphrase
+instead, and the store's opens nothing in it: `vault.Status()`, `vault.Unseal(…)`,
+`vault.Seal()` and `vault.ChangePassphrase(…)` act on that vault alone, and
+`Status().Custody` says which kind a vault is. An unseal lasts the node's period and
+then closes by itself; a refusal after a run of wrong passphrases means **wait**, and
+is not retried here. The statements and frames are the protocol repository's
+`spec/vault-v1.md`.
 
 ## Objects, files and health
 

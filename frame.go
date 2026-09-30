@@ -16,7 +16,13 @@ const (
 	frameSubscribe = 4
 	frameChange    = 5
 	frameElsewhere = 13
+	// frameVault is client → node only, sent only to a node whose greeting says
+	// minor 2 or later (§3.14): an older one closes the connection on the tag.
+	frameVault = 17
 )
+
+// vaultMinor is the minor a node must announce before a Vault frame reaches it.
+const vaultMinor = 2
 
 const headerBytes = 5
 
@@ -93,19 +99,21 @@ func writeFrame(w io.Writer, kind byte, body []byte) error {
 // "this is not a TessariDB node", not as "this node speaks a version I do not".
 // The second message sends an operator looking for an upgrade that does not
 // exist.
-func readGreeting(r io.Reader) error {
+func readGreeting(r io.Reader) (byte, error) {
 	var head [6]byte
 	if _, err := io.ReadFull(r, head[:]); err != nil {
-		return fmt.Errorf("tessaridb: no greeting from the peer: %w", err)
+		return 0, fmt.Errorf("tessaridb: no greeting from the peer: %w", err)
 	}
 	if !bytes.Equal(head[:4], magic[:]) {
-		return fmt.Errorf("%w (magic %q)", ErrNotThisProtocol, head[:4])
+		return 0, fmt.Errorf("%w (magic %q)", ErrNotThisProtocol, head[:4])
 	}
 	if head[4] != major {
-		return fmt.Errorf("%w: it speaks major %d and this client speaks %d",
+		return 0, fmt.Errorf("%w: it speaks major %d and this client speaks %d",
 			ErrWrongVersion, head[4], major)
 	}
-	return nil
+	// The peer's minor: never a refusal, and read only so a call can decline to
+	// send what an older peer cannot read.
+	return head[5], nil
 }
 
 // readFrame reads one frame and returns its kind and body.
