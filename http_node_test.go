@@ -197,14 +197,14 @@ func TestANameThatIsNotABucketListsAsAbsent(t *testing.T) {
 	}
 }
 
-func TestBackupReturnsTheWholeLog(t *testing.T) {
+func TestBackupReturnsTheWholeStore(t *testing.T) {
 	node := httpNode(t)
-	log, err := node.Backup(nil)
+	backup, err := node.Backup(nil)
 	if err != nil {
 		t.Fatalf("backup: %v", err)
 	}
-	if len(log) == 0 {
-		t.Fatal("a store that has been written to has a log")
+	if len(backup) == 0 {
+		t.Fatal("a store that has been written to has a backup")
 	}
 }
 
