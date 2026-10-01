@@ -111,12 +111,25 @@ var changeFrames = map[byte]bool{
 
 // Execute runs a script and returns its outcomes.
 //
-// A refusal comes back as a *Refusal error; a redirect comes back in the Reply,
-// because it is an instruction rather than a failure.
+// A refusal comes back as a *Refusal error. A redirect (§3.12) is followed to
+// the node it names — at most three hops, the node there checked with
+// session::context(), this session's namespace and database selected there
+// first. A settled redirect moves this connection to that node; a transient one
+// answers and stays here.
 func (c *Conn) Execute(script string, parameters map[string]Value) (*Reply, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	reply, err := c.ask(script, parameters)
+	if err != nil || reply.Redirect == nil {
+		return reply, err
+	}
+	return c.follow(script, parameters, reply.Redirect)
+}
+
+// ask sends one request and reads its reply, a redirect returned rather than
+// followed. The caller holds c.mu, or owns c alone.
+func (c *Conn) ask(script string, parameters map[string]Value) (*Reply, error) {
 	if c.subscribed {
 		return nil, errors.New("tessaridb: this connection is subscribed and no longer answers statements — open a second one")
 	}
