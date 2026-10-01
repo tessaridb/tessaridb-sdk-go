@@ -246,9 +246,10 @@ func (c *HTTPClient) Script(script string) ([]any, error) {
 	return ScriptResults(body)
 }
 
-// Backup returns the whole log in one response — there is no resumption and no
-// range support in this version, so a caller's memory ceiling for this route is
-// the size of the log.
+// Backup returns a snapshot of the store's state in one response (a node before
+// 0.18.0-beta answered its whole log); with from, the log committed after that
+// position, 1 for the whole log. There is no resumption and no range support, so
+// a caller's memory ceiling for this route is the size of what it answers.
 func (c *HTTPClient) Backup(from *uint64) ([]byte, error) {
 	path := "/backup"
 	if from != nil {
