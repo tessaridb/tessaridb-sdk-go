@@ -7,8 +7,10 @@ package tessaridb
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -277,5 +279,73 @@ func TestATenancyThatIsNotAPlainNameIsNotFollowed(t *testing.T) {
 	}
 	if seen, _ := b.log(); len(seen) != 0 {
 		t.Fatalf("B was dialled: %q", seen)
+	}
+}
+
+// The live half: a write and a leader-only read sent to a follower of a real
+// two-node cluster land on the leader, the read by a transient redirect this
+// client follows. TESSARIDB_TEST_CLUSTER=<leader host:port>,<follower host:port>,
+// a cluster whose namespace prod holds database shop with collection ledger.
+func TestALiveClusterSendsAMisroutedWriteAndReadToTheLeader(t *testing.T) {
+	cluster := os.Getenv("TESSARIDB_TEST_CLUSTER")
+	if cluster == "" {
+		t.Skip("TESSARIDB_TEST_CLUSTER is not set")
+	}
+	leader, follower, _ := strings.Cut(cluster, ",")
+	const tenancy = "USE NAMESPACE prod; USE DATABASE shop;"
+	key := fmt.Sprintf("go%d", os.Getpid())
+	dial := func(address string) *Conn {
+		conn, err := Dial(address, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	run := func(conn *Conn, script string) *Reply {
+		reply, err := conn.Execute(script, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", script, err)
+		}
+		return reply
+	}
+	nodeOf := func(conn *Conn) Value {
+		reply := run(conn, contextScript)
+		return reply.Outcomes[len(reply.Outcomes)-1].(ValueOutcome).Value.(Object).Fields["node"]
+	}
+	rows := func(reply *Reply) int {
+		if records, ok := reply.Outcomes[len(reply.Outcomes)-1].(Records); ok {
+			return len(records.Rows)
+		}
+		return -1
+	}
+
+	// A forward carries the script and not the session.
+	writer := dial(follower)
+	run(writer, fmt.Sprintf("%s CREATE ledger:'%s' = { total: 1 };", tenancy, key))
+	_ = writer.Close()
+	onLeader := dial(leader)
+	defer onLeader.Close()
+	leaderNode := nodeOf(onLeader)
+	run(onLeader, tenancy)
+	if n := rows(run(onLeader, fmt.Sprintf("SELECT * FROM ledger:'%s';", key))); n != 1 {
+		t.Fatalf("the write did not land on the leader: %d rows", n)
+	}
+
+	reader := dial(follower)
+	defer reader.Close()
+	followerNode := nodeOf(reader)
+	if reflect.DeepEqual(leaderNode, followerNode) {
+		t.Fatal("one node, not two")
+	}
+	run(reader, tenancy)
+	reply := run(reader, fmt.Sprintf("SELECT * FROM ledger:'%s' ANSWERED BY LEADER;", key))
+	if reply.Redirect != nil {
+		t.Fatalf("the redirect was not followed: %+v", reply.Redirect)
+	}
+	if n := rows(reply); n != 1 {
+		t.Fatalf("the leader did not answer: %d rows", n)
+	}
+	if now := nodeOf(reader); !reflect.DeepEqual(now, followerNode) {
+		t.Fatal("a transient redirect moved the connection")
 	}
 }
