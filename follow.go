@@ -75,7 +75,7 @@ func (c *Conn) follow(script string, parameters map[string]Value, first *Redirec
 			return nil, &StaleRedirectError{Epoch: redirect.Epoch, Floor: floor}
 		}
 		floor = redirect.Epoch
-		there, err := Dial(redirect.Endpoint, c.credentials)
+		there, err := dial(redirect.Endpoint, c.credentials, c.trust)
 		if err != nil {
 			return nil, err
 		}

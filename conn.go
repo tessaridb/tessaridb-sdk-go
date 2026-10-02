@@ -58,15 +58,30 @@ type Conn struct {
 	spent       bool
 	subscribed  bool
 	peerMinor   byte
+	trust       *Trust
 	mu          sync.Mutex
 }
 
 // Dial opens a connection and exchanges the greeting.
 //
-// The address is a bare host:port. There is no URL scheme, and there is no TLS
-// on this protocol — credentials travel as given, so run it on a protected
-// network or behind something that terminates TLS.
+// The address is a bare host:port with no URL scheme. Over Dial the connection,
+// credentials included, travels in the clear, which belongs on a network you
+// protect; DialTLS speaks TLS to a node that serves it (protocol §1.1).
 func Dial(address string, credentials *Credentials) (*Conn, error) {
+	return dial(address, credentials, nil)
+}
+
+// DialTLS opens a connection over TLS 1.3, checking the node's certificate
+// against trust and its name against the host in address, and exchanges the
+// greeting. A redirect is followed with the same trust.
+func DialTLS(address string, credentials *Credentials, trust *Trust) (*Conn, error) {
+	if trust == nil {
+		return nil, &TLSError{Err: errors.New("DialTLS needs a Trust")}
+	}
+	return dial(address, credentials, trust)
+}
+
+func dial(address string, credentials *Credentials, trust *Trust) (*Conn, error) {
 	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("tessaridb: dialling %s: %w", address, err)
@@ -76,8 +91,16 @@ func Dial(address string, credentials *Credentials) (*Conn, error) {
 		// latency to every one and saves nothing.
 		_ = tcp.SetNoDelay(true)
 	}
+	if trust != nil {
+		secured, err := trust.secure(conn, address)
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		conn = secured
+	}
 
-	c := &Conn{conn: conn, r: bufio.NewReader(conn), credentials: credentials}
+	c := &Conn{conn: conn, r: bufio.NewReader(conn), credentials: credentials, trust: trust}
 	if _, err := conn.Write(greeting()); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("tessaridb: sending the greeting: %w", err)
