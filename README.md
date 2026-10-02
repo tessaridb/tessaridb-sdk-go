@@ -327,12 +327,25 @@ a text one in a single array, which no declared kind could cover. It is an
 identifier to display, log and pass back; a caller that needs its type reads the
 identity off the wire, where it carries its tag.
 
-## There is no TLS on either transport
+## TLS
 
-Credentials travel as given, and so does the session token — it is a bearer
-credential in the literal sense. Run this on a protected network, or behind
-something that terminates TLS. This is a property of the protocol, not an
-omission in the client, and it is stated here rather than left to be discovered.
+A node started with a certificate speaks TLS 1.3 on both ports and nothing else,
+and a cluster node serves clients in the clear only when its operator chose to
+(node `0.21.0-beta` and later).
+
+```go
+pem, err := os.ReadFile("ca.pem")
+trust, err := tessaridb.TrustPEM(pem) // or tessaridb.TrustSystem()
+conn, err := tessaridb.DialTLS("db.example:9080", creds, trust)
+http, err := tessaridb.NewHTTPClientTLS("db.example:8000", creds, trust)
+```
+
+Every connection checks the node's certificate chain and that it names the host
+you dialled — a DNS name, or an IP address against the certificate's IP
+entries — including each node a redirect sends a request to. A `Trust` has no
+field that skips either check. A failed handshake on the wire is a `*TLSError`,
+which is not retried. Over `Dial` and `NewHTTPClient` credentials and the
+session token travel in the clear, which belongs on a network you protect.
 
 ## Values
 

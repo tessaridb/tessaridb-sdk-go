@@ -3,6 +3,7 @@ package tessaridb
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,7 @@ type HTTPClient struct {
 	address     string
 	credentials *Credentials
 	client      *http.Client
+	secure      bool
 
 	mu    sync.Mutex
 	token string
@@ -54,6 +56,24 @@ func NewHTTPClient(address string, credentials *Credentials) *HTTPClient {
 		credentials: credentials,
 		client:      &http.Client{},
 	}
+}
+
+// NewHTTPClientTLS talks to one node over HTTPS, checking its certificate
+// against trust and its name against the host in address (protocol §1.1).
+func NewHTTPClientTLS(address string, credentials *Credentials, trust *Trust) (*HTTPClient, error) {
+	if trust == nil {
+		return nil, &TLSError{Err: errors.New("NewHTTPClientTLS needs a Trust")}
+	}
+	config, err := trust.config(address, "http/1.1")
+	if err != nil {
+		return nil, err
+	}
+	return &HTTPClient{
+		address:     address,
+		credentials: credentials,
+		client:      &http.Client{Transport: &http.Transport{TLSClientConfig: config}},
+		secure:      true,
+	}, nil
 }
 
 // OpenSession spends the password once and holds the token.
@@ -134,6 +154,9 @@ func (c *HTTPClient) CloseSession() error {
 }
 
 func (c *HTTPClient) url(path string) string {
+	if c.secure {
+		return "https://" + c.address + path
+	}
 	return "http://" + c.address + path
 }
 
