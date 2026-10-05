@@ -33,6 +33,9 @@ type HTTPError struct {
 	// a peer can. The address is here rather than in the sentence, because a
 	// redirect whose target a client must parse out of prose is not a redirect.
 	Location string
+	// Class is the class the body's "code" names (§5.4); empty from a node
+	// before protocol 1.3.
+	Class RefusalClass
 }
 
 func (e *HTTPError) Error() string {
@@ -228,15 +231,21 @@ func refusal(response *http.Response) error {
 	body, _ := io.ReadAll(response.Body)
 	var answer struct {
 		Error string `json:"error"`
+		Code  string `json:"code"`
 	}
 	_ = json.Unmarshal(body, &answer)
 	if answer.Error == "" {
 		answer.Error = http.StatusText(response.StatusCode)
 	}
+	var class RefusalClass
+	if answer.Code != "" {
+		class = refusalClassOfWord(answer.Code)
+	}
 	return &HTTPError{
 		Status:   response.StatusCode,
 		Message:  answer.Error,
 		Location: response.Header.Get("Location"),
+		Class:    class,
 	}
 }
 
