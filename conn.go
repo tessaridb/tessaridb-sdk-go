@@ -25,7 +25,11 @@ type Credentials struct {
 // A Refusal is the node declining a statement it understood — a syntax error, a
 // permission, a constraint. The message is the store's own words, carried whole,
 // and it does not close the connection.
-type Refusal struct{ Message string }
+type Refusal struct {
+	Message string
+	// Class is what to do about it; empty from a node before protocol 1.3.
+	Class RefusalClass
+}
 
 func (r *Refusal) Error() string { return "tessaridb: refused: " + r.Message }
 
@@ -174,7 +178,7 @@ func (c *Conn) ask(script string, parameters map[string]Value) (*Reply, error) {
 		outcomes, err := readAnswer(answer)
 		return &Reply{Outcomes: outcomes}, err
 	case frameRefusal:
-		return nil, &Refusal{Message: string(answer)}
+		return nil, readRefusal(answer)
 	case frameElsewhere:
 		redirect, err := readElsewhere(answer)
 		return &Reply{Redirect: redirect}, err
@@ -295,7 +299,7 @@ func (c *Conn) subscribe(from uint64, table string, cursor string) (<-chan Chang
 				return
 			}
 			if kind == frameRefusal {
-				fail <- &Refusal{Message: string(body)}
+				fail <- readRefusal(body)
 				return
 			}
 			change, err := readChange(body)

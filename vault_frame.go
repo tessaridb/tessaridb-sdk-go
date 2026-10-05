@@ -158,7 +158,7 @@ func (c *Conn) vaultFrame(place *vaultPlace, act vaultAct) (VaultStatus, error) 
 	}
 	switch kind {
 	case frameRefusal:
-		return VaultStatus{}, &Refusal{Message: string(answer)}
+		return VaultStatus{}, readRefusal(answer)
 	case frameAnswer:
 		outcomes, err := readAnswer(answer)
 		if err != nil {

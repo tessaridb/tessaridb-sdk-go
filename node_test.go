@@ -141,6 +141,9 @@ func TestARefusalCarriesTheStoresOwnWordsAndDoesNotCloseTheConnection(t *testing
 	if !strings.Contains(refusal.Message, "nosuchtable") {
 		t.Fatalf("the refusal should carry the store's own words: %q", refusal.Message)
 	}
+	if refusal.Class != RefusalInvalid {
+		t.Fatalf("a table the node does not hold is classed invalid, got %q", refusal.Class)
+	}
 	// The connection survives it — a refusal is an answer, not a fault.
 	run(t, c, use+" SELECT * FROM thing:1;")
 }

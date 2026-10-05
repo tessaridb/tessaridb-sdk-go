@@ -465,3 +465,38 @@ func TestAChangeFromASplitTableCarriesItsCursor(t *testing.T) {
 		t.Fatalf("split change: %+v, %v", split, err)
 	}
 }
+
+// Every refusal vector reads to its class and its words (§3.6). A null class in
+// the corpus is a body with none — a node before protocol 1.3.
+func TestRefusalCorpus(t *testing.T) {
+	var vectors []struct {
+		Name    string `json:"name"`
+		BodyHex string `json:"body_hex"`
+		Decoded struct {
+			Class   *string `json:"class"`
+			Message string  `json:"message"`
+		} `json:"decoded"`
+	}
+	if err := json.Unmarshal(readCorpus(t, "frames-v1.json")["refusal"], &vectors); err != nil {
+		t.Fatalf("the refusal vectors do not parse: %v", err)
+	}
+	if len(vectors) == 0 {
+		t.Fatal("the corpus carries no refusal vectors")
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			body, err := hex.DecodeString(vector.BodyHex)
+			if err != nil {
+				t.Fatalf("body_hex: %v", err)
+			}
+			read := readRefusal(body)
+			var want RefusalClass
+			if vector.Decoded.Class != nil {
+				want = RefusalClass(*vector.Decoded.Class)
+			}
+			if read.Class != want || read.Message != vector.Decoded.Message {
+				t.Fatalf("read (%q, %q), want (%q, %q)", read.Class, read.Message, want, vector.Decoded.Message)
+			}
+		})
+	}
+}

@@ -72,7 +72,7 @@ var (
 	magic = [4]byte{'T', 'E', 'S', 'S'}
 	// The version this client speaks.
 	major byte = 1
-	minor byte = 1
+	minor byte = 3
 )
 
 func greeting() []byte {
