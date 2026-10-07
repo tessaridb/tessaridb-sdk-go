@@ -267,6 +267,22 @@ func (c *Conn) ChangesAt(cursor string, table string) (<-chan Change, <-chan err
 
 // subscribe sends the Subscribe frame and starts delivering. The caller holds mu.
 func (c *Conn) subscribe(from uint64, table string, cursor string) (<-chan Change, <-chan error, error) {
+	body, err := subscribeBody(from, table, cursor, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := writeFrame(c.conn, frameSubscribe, body); err != nil {
+		return nil, nil, err
+	}
+	c.subscribed = true
+	changes, fail := deliver(c, changeFrames, func(_ byte, body []byte) (Change, error) {
+		return readChange(body)
+	})
+	return changes, fail, nil
+}
+
+// subscribeBody is the Subscribe frame's body (§3.7).
+func subscribeBody(from uint64, table string, cursor string, narrowing *Narrowing) ([]byte, error) {
 	w := &writer{}
 	w.u64(from)
 	if table == "" {
@@ -276,22 +292,38 @@ func (c *Conn) subscribe(from uint64, table string, cursor string) (<-chan Chang
 		w.text(table)
 	}
 	// Last and only when present (§3.7): without it this is the frame every
-	// earlier node reads.
-	if cursor != "" {
+	// earlier node reads. A condition comes after it, so a condition with no
+	// cursor writes the cursor's place as empty text.
+	if cursor != "" || narrowing != nil {
 		w.text(cursor)
 	}
-	if err := writeFrame(c.conn, frameSubscribe, w.buf); err != nil {
-		return nil, nil, err
+	if narrowing != nil {
+		w.text(narrowing.Condition)
+		// The parameters are ONE value: an object of name → value.
+		fields := narrowing.Parameters
+		if fields == nil {
+			fields = map[string]Value{}
+		}
+		encoded, err := Encode(Object{Fields: fields})
+		if err != nil {
+			return nil, err
+		}
+		w.lenbytes(encoded)
 	}
-	c.subscribed = true
+	return w.buf, nil
+}
 
-	changes := make(chan Change)
+// deliver reads a subscribed connection's frames until it ends, handing each to
+// read. A refusal ends the feed on the error channel; a goodbye between frames
+// closes both channels with nothing on fail.
+func deliver[T any](c *Conn, kinds map[byte]bool, read func(kind byte, body []byte) (T, error)) (<-chan T, <-chan error) {
+	items := make(chan T)
 	fail := make(chan error, 1)
 	go func() {
-		defer close(changes)
+		defer close(items)
 		defer close(fail)
 		for {
-			kind, body, err := readFrame(c.r, changeFrames)
+			kind, body, err := readFrame(c.r, kinds)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					fail <- err
@@ -302,15 +334,15 @@ func (c *Conn) subscribe(from uint64, table string, cursor string) (<-chan Chang
 				fail <- readRefusal(body)
 				return
 			}
-			change, err := readChange(body)
+			item, err := read(kind, body)
 			if err != nil {
 				fail <- err
 				return
 			}
-			changes <- change
+			items <- item
 		}
 	}()
-	return changes, fail, nil
+	return items, fail
 }
 
 func readChange(body []byte) (Change, error) {
