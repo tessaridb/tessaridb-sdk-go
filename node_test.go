@@ -235,3 +235,77 @@ func TestAValueOutcomeCarriesALengthBeforeItsValue(t *testing.T) {
 		}
 	}
 }
+
+// A narrowed feed (§3.7, §3.15) sends the record that matches, sends the one that
+// stops matching as a removal, never sends the one that never matched, and says
+// how far it read past the changes it skipped.
+func TestANarrowedFeedSendsTheMatchTheLeavingAndHowFarItRead(t *testing.T) {
+	address := os.Getenv("TESSARIDB_TEST_NODE")
+	if address == "" {
+		t.Skip("set TESSARIDB_TEST_NODE=<host:port> to run the live tests")
+	}
+
+	setup := node(t)
+	seed(t, setup)
+
+	watcher, err := Dial(address, nil)
+	if err != nil {
+		t.Fatalf("dial the watcher: %v", err)
+	}
+	defer watcher.Close()
+	run(t, watcher, use)
+
+	arrivals, fail, err := watcher.ChangesWhere(0, true, Narrowing{
+		Table:      "thing",
+		Condition:  "n >= $least",
+		Parameters: map[string]Value{"least": Integer{Value: 10}},
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	run_ := fmt.Sprintf("narrowed-%d", time.Now().UnixNano())
+	in, out := run_+"-in", run_+"-out"
+	run(t, setup, use+fmt.Sprintf(" CREATE thing:'%s' = { n: 20 }; CREATE thing:'%s' = { n: 1 };", in, out))
+	run(t, setup, use+fmt.Sprintf(" UPDATE thing:'%s' SET n = 2;", in))
+	run(t, setup, use+fmt.Sprintf(" UPDATE thing:'%s' SET n = 3;", out))
+
+	var entered, left *Change
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case arrival, open := <-arrivals:
+			if !open {
+				t.Fatal("the feed closed before it said how far it read")
+			}
+			switch a := arrival.(type) {
+			case Change:
+				if strings.HasPrefix(a.Identity, out) {
+					t.Fatalf("a record that never matched was sent: %+v", a)
+				}
+				if a.Identity != in {
+					continue
+				}
+				if entered == nil {
+					if a.Removed {
+						t.Fatalf("the matching write arrived as a removal: %+v", a)
+					}
+					entered = &a
+				} else if left == nil {
+					if !a.Removed {
+						t.Fatalf("the write that stopped matching arrived as a write: %+v", a)
+					}
+					left = &a
+				}
+			case Progress:
+				if left != nil && a.Sequence > left.Sequence {
+					return
+				}
+			}
+		case err := <-fail:
+			t.Fatalf("the feed failed: %v", err)
+		case <-deadline:
+			t.Fatalf("entered %v, left %v, and no progress past the leaving", entered, left)
+		}
+	}
+}

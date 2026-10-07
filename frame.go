@@ -19,10 +19,17 @@ const (
 	// frameVault is client → node only, sent only to a node whose greeting says
 	// minor 2 or later (§3.14): an older one closes the connection on the tag.
 	frameVault = 17
+	// frameProgress is node → client only, on a feed that named a condition,
+	// to a client whose greeting said minor 4 or later (§3.15).
+	frameProgress = 37
 )
 
 // vaultMinor is the minor a node must announce before a Vault frame reaches it.
 const vaultMinor = 2
+
+// conditionMinor is the minor a node must announce before a feed's condition
+// reaches it: an older one reads past the bytes and delivers every change.
+const conditionMinor = 4
 
 const headerBytes = 5
 
@@ -72,7 +79,7 @@ var (
 	magic = [4]byte{'T', 'E', 'S', 'S'}
 	// The version this client speaks.
 	major byte = 1
-	minor byte = 3
+	minor byte = 4
 )
 
 func greeting() []byte {
