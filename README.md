@@ -206,6 +206,47 @@ repository's `spec/consumer-v1.md`, which every client follows, and the
 statements it sends are checked against all 14 cases of
 `conformance/consumer-v1.json`.
 
+## Taking work from a queue
+
+A queue (`DEFINE QUEUE`, engine `0.35.0` or later for everything below) hands
+each record to one worker under a hold that lapses. A `Queue` claims as a named
+worker and settles each record — `Done` deletes it, `Release` hands it back:
+
+```go
+queue, err := tessaridb.NewQueue(conn, "app", "main", "jobs", "resizer")
+if err != nil {
+	return err
+}
+// Take only the work this worker can do; values are bound.
+queue.Batch(10).Only(tessaridb.Compare("kind", tessaridb.Eq, tessaridb.Text{Value: "image"}))
+
+// Automatic: nil marks the record done, an error hands it back at once.
+// Cancelling ctx stops the loop and hands back the rest of the batch.
+err = queue.RunAuto(ctx, func(ctx context.Context, job tessaridb.Job) error {
+	fmt.Println(job.Identity, job.Attempts)
+	return nil
+})
+
+// Manual: Finish{}, Release{After: 5 * time.Second} — the queue needs a NOT
+// BEFORE field — or Leave{} for the hold to lapse.
+err = queue.RunManual(ctx, func(ctx context.Context, job tessaridb.Job) tessaridb.Handled {
+	return tessaridb.Finish{}
+})
+
+// Or one step at a time.
+jobs, err := queue.Claim(5, nil)
+for _, job := range jobs {
+	err = queue.Done(job)
+}
+```
+
+Workers on one queue take **different** records: a claim passes over records
+another worker's claim is taking. Work is **at least once** — key an outside
+effect on the queue and `job.Identity`. A record whose attempts are spent goes to
+the queue's `DEAD LETTER TO` topic, read with a `Consumer`. The behaviour is
+`spec/queue-v1.md`, and `go test` renders the statements against all 20 cases of
+`conformance/queue-v1.json`.
+
 ## A space as a cache, a counter and a lock
 
 A space (`DEFINE SPACE`) keeps one value per key with an optional expiry.
