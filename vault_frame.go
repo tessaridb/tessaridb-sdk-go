@@ -56,7 +56,7 @@ type vaultAct struct {
 	passphrase, current, next string
 }
 
-var vaultActs = map[string]byte{"status": 1, "unseal": 2, "seal": 3, "change": 4}
+var vaultActs = map[string]byte{"status": 1, "unseal": 2, "seal": 3, "change": 4, "declare": 5}
 
 // vaultFrameBody is credentials, the target (the store, or one vault), then the
 // act and its fields.
@@ -79,7 +79,7 @@ func vaultFrameBody(credentials *Credentials, place *vaultPlace, act vaultAct) [
 	}
 	w.u8(vaultActs[act.kind])
 	switch act.kind {
-	case "unseal":
+	case "unseal", "declare":
 		w.text(act.passphrase)
 	case "change":
 		w.text(act.current)
@@ -138,6 +138,10 @@ func (c *Conn) vaultFrame(place *vaultPlace, act vaultAct) (VaultStatus, error) 
 	if c.peerMinor < vaultMinor {
 		return VaultStatus{}, fmt.Errorf("%w: it speaks minor %d and the vault frame needs %d",
 			ErrNodeTooOld, c.peerMinor, vaultMinor)
+	}
+	if act.kind == "declare" && c.peerMinor < declareMinor {
+		return VaultStatus{}, fmt.Errorf("%w: it speaks minor %d and the declare act needs %d",
+			ErrNodeTooOld, c.peerMinor, declareMinor)
 	}
 	if c.subscribed {
 		return VaultStatus{}, errors.New("tessaridb: this connection is subscribed and no longer answers statements")

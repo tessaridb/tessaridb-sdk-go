@@ -27,6 +27,10 @@ const (
 // vaultMinor is the minor a node must announce before a Vault frame reaches it.
 const vaultMinor = 2
 
+// declareMinor is the minor a node announces before the vault frame's declare
+// act (act 5) is sent to it; an older node reads the act as malformed.
+const declareMinor = 6
+
 // conditionMinor is the minor a node must announce before a feed's condition
 // reaches it: an older one reads past the bytes and delivers every change.
 const conditionMinor = 4

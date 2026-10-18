@@ -304,7 +304,9 @@ secret, err := vault.Reveal(id, "password")
 A vault declared `DEFINE VAULT team PASSPHRASE '…'` opens with its own passphrase
 instead, and the store's opens nothing in it: `vault.Status()`, `vault.Unseal(…)`,
 `vault.Seal()` and `vault.ChangePassphrase(…)` act on that vault alone, and
-`Status().Custody` says which kind a vault is. An unseal lasts the node's period and
+`Status().Custody` says which kind a vault is. `vault.Declare(…)` creates such a
+vault with the passphrase sent as a field rather than in a script (a node from
+`0.36.1`, protocol minor 6). An unseal lasts the node's period and
 then closes by itself; a refusal after a run of wrong passphrases means **wait**, and
 is not retried here. The statements and frames are the protocol repository's
 `spec/vault-v1.md`.

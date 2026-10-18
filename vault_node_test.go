@@ -104,8 +104,11 @@ func TestTheWholeVaultContractRunsAgainstANode(t *testing.T) {
 	}
 
 	// A vault with its own passphrase: the store's opens nothing in it.
-	must(conn.Execute("USE NAMESPACE app; USE DATABASE main; DEFINE VAULT own PASSPHRASE '"+vaultTeam+"'; "+
-		"DEFINE FIELD token ON own TYPE string SECRET;", nil))
+	// Declared through the frame, so the passphrase is never script text.
+	if declared := must(must(NewVault(conn, "app", "main", "own")).Declare(vaultTeam)); declared.Custody != CustodyOwn {
+		t.Fatalf("%+v", declared)
+	}
+	must(conn.Execute("USE NAMESPACE app; USE DATABASE main; DEFINE FIELD token ON own TYPE string SECRET;", nil))
 	own := must(NewVault(conn, "app", "main", "own"))
 	if status := must(own.Status()); status.Custody != CustodyOwn || status.State != Unsealed {
 		t.Fatalf("%+v", status)
