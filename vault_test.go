@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,8 +47,8 @@ func readVaultCorpus(t *testing.T) vaultCorpus {
 
 func TestEveryVaultFrameIsTheCorpusBytes(t *testing.T) {
 	corpus := readVaultCorpus(t)
-	if len(corpus.Frames) != 11 {
-		t.Fatalf("the corpus holds %d frames, not 11", len(corpus.Frames))
+	if len(corpus.Frames) != 12 {
+		t.Fatalf("the corpus holds %d frames, not 12", len(corpus.Frames))
 	}
 	for _, c := range corpus.Frames {
 		var build struct {
@@ -227,5 +228,18 @@ func TestAVaultStatusIsReadFromClosedSets(t *testing.T) {
 				t.Fatalf("seals_at %v", sealsAt)
 			}
 		})
+	}
+}
+
+func TestADeclarationToANodeBelowMinor6IsRefusedBeforeSending(t *testing.T) {
+	// No socket at all: a declaration that got past the minor would write to it.
+	conn := &Conn{peerMinor: 5}
+	vault := &Vault{conn: conn, place: vaultPlace{"app", "main", "own"}}
+	_, err := vault.Declare("a passphrase")
+	if !errors.Is(err, ErrNodeTooOld) {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), "a passphrase") {
+		t.Fatalf("the refusal shows the passphrase: %v", err)
 	}
 }

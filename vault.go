@@ -119,6 +119,14 @@ func (v *Vault) ChangePassphrase(current, next string) (VaultStatus, error) {
 	return v.conn.vaultFrame(&v.place, vaultAct{kind: "change", current: current, next: next})
 }
 
+// Declare creates this vault with its own passphrase, as DEFINE VAULT …
+// PASSPHRASE does, with the passphrase sent as a field of the frame rather than
+// in a script; the new vault is unsealed for the node's period. ErrNodeTooOld
+// before sending to a node below protocol minor 6.
+func (v *Vault) Declare(passphrase string) (VaultStatus, error) {
+	return v.conn.vaultFrame(&v.place, vaultAct{kind: "declare", passphrase: passphrase})
+}
+
 // List answers one page of ids after `after` (the previous page's Next, or nil).
 // A limit of 0 asks for the node's own page of 1000; otherwise 1 to 10000.
 func (v *Vault) List(after Value, limit int) (Page, error) {
