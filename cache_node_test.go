@@ -132,3 +132,94 @@ func TestACacheLeaseIsExtendedByItsHolderAndReleasedSoTheNextCanTakeIt(t *testin
 		t.Fatalf("holder %v", got)
 	}
 }
+
+func TestAKeyHoldsAListAHashASetAndARanking(t *testing.T) {
+	c := liveCache(t)
+	words := func(items ...string) []Value { return texts(items) }
+	if n := must(c.ListPush("l", Back, words("a", "b", "c", "d")...)); n != 4 {
+		t.Fatalf("push %d", n)
+	}
+	if last, ok, err := c.ListAt("l", -1); err != nil || !ok || last != (Text{Value: "d"}) {
+		t.Fatalf("at -1: %v %v %v", last, ok, err)
+	}
+	if got := must(c.ListRange("l", 1, 2)); !reflect.DeepEqual(got, words("b", "c")) {
+		t.Fatalf("range %v", got)
+	}
+	if first, ok, err := c.ListPop("l", Front); err != nil || !ok || first != (Text{Value: "a"}) {
+		t.Fatalf("pop %v %v %v", first, ok, err)
+	}
+	if got := must(c.ListPopMany("l", Back, 2)); !reflect.DeepEqual(got, words("d", "c")) {
+		t.Fatalf("pop many %v", got)
+	}
+	if must(c.ListRemove("l", Text{Value: "b"}, nil)) != 1 || must(c.ListLen("l")) != 0 {
+		t.Fatal("an emptied list is no key")
+	}
+	if _, ok, err := c.ListPop("l", Front); err != nil || ok {
+		t.Fatalf("a pop of no list found something: %v %v", ok, err)
+	}
+	if got := must(c.ListRange("nothing", 0, 5)); len(got) != 0 {
+		t.Fatalf("range of no key %v", got)
+	}
+	must(c.ListPush("t", Back, words("1", "2", "3")...))
+	if err := c.ListTrim("t", 0, 1); err != nil || must(c.ListLen("t")) != 2 {
+		t.Fatalf("trim %v", err)
+	}
+
+	if must(c.HashSet("h", HashField{"x", Integer{Value: 1}}, HashField{"y", Text{Value: "why"}})) != 2 {
+		t.Fatal("hash set")
+	}
+	if y, ok, err := c.HashGet("h", "y"); err != nil || !ok || y != (Text{Value: "why"}) {
+		t.Fatalf("hash get %v %v %v", y, ok, err)
+	}
+	if _, ok, err := c.HashGet("h", "z"); err != nil || ok {
+		t.Fatalf("an absent field was found: %v %v", ok, err)
+	}
+	if must(c.HashIncr("h", "x", 4)) != 5 || must(c.HashLen("h")) != 2 || must(c.HashRemove("h", "y")) != 1 {
+		t.Fatal("hash incr, len or remove")
+	}
+	if got := must(c.HashGetAll("h")); !reflect.DeepEqual(got, map[string]Value{"x": Integer{Value: 5}}) {
+		t.Fatalf("get all %v", got)
+	}
+	if got := must(c.HashGetAll("nothing")); len(got) != 0 {
+		t.Fatalf("get all of no key %v", got)
+	}
+
+	if must(c.MembersAdd("s", words("p", "q")...)) != 2 || !must(c.MembersHas("s", Text{Value: "p"})) {
+		t.Fatal("members add or has")
+	}
+	if must(c.MembersHas("nothing", Text{Value: "p"})) || must(c.MembersLen("s")) != 2 {
+		t.Fatal("members of no key, or len")
+	}
+	if must(c.MembersRemove("s", Text{Value: "q"})) != 1 {
+		t.Fatal("members remove")
+	}
+	if got := must(c.MembersAll("s")); !reflect.DeepEqual(got, words("p")) {
+		t.Fatalf("members all %v", got)
+	}
+
+	if must(c.ScoresAdd("r", Scored{"ann", 3}, Scored{"bob", 1}, Scored{"cid", 2})) != 3 {
+		t.Fatal("scores add")
+	}
+	if must(c.ScoresIncr("r", "bob", 0.5)) != 1.5 {
+		t.Fatal("scores incr")
+	}
+	if score, ok, err := c.ScoresScore("r", "ann"); err != nil || !ok || score != 3 {
+		t.Fatalf("score %v %v %v", score, ok, err)
+	}
+	if place, ok, err := c.ScoresRank("r", "ann"); err != nil || !ok || place != 2 {
+		t.Fatalf("rank %v %v %v", place, ok, err)
+	}
+	if _, ok, err := c.ScoresRank("r", "eve"); err != nil || ok {
+		t.Fatalf("an unranked member has a place: %v %v", ok, err)
+	}
+	if got := must(c.ScoresRange("r", 0, 1)); !reflect.DeepEqual(got, []Scored{{"bob", 1.5}, {"cid", 2}}) {
+		t.Fatalf("scores range %v", got)
+	}
+	low := 2.0
+	if got := must(c.ScoresBetween("r", &low, nil)); !reflect.DeepEqual(got, []Scored{{"cid", 2}, {"ann", 3}}) {
+		t.Fatalf("scores between %v", got)
+	}
+	if must(c.ScoresRemove("r", "ann")) != 1 {
+		t.Fatal("scores remove")
+	}
+}
