@@ -1,6 +1,7 @@
 package tessaridb
 
-// A space used as a cache, a counter and a lock — cache contract 1.0
+// A space used as a cache, a counter and a lock, and a key holding a list, a
+// hash, a set or a ranking (cache_containers.go) — cache contract 1.1
 // (spec/cache-v1.md in the protocol repository).
 //
 // A Cache uses a connection the caller holds and sends one statement per call,

@@ -281,6 +281,21 @@ the next holder's lock. `TTL` keeps the store's two absences apart:
 `TTLExpires`, `TTLNever`, `TTLAbsent`. The statements are the protocol
 repository's `spec/cache-v1.md`, which every client follows.
 
+A key may also hold a list, a hash, a set of members or a ranking. Each call
+is still one statement, atomic per key, and a key that is not there reads as
+empty:
+
+```go
+if _, err := cache.ListPush("jobs", tessaridb.Back, tessaridb.Text{Value: "a"}, tessaridb.Text{Value: "b"}); err != nil {
+	return err
+}
+next, found, err := cache.ListPop("jobs", tessaridb.Front)
+_, err = cache.HashSet("user:1", tessaridb.HashField{Name: "name", Value: tessaridb.Text{Value: "ada"}})
+_, err = cache.MembersAdd("tags", tessaridb.Text{Value: "new"})
+_, err = cache.ScoresAdd("board", tessaridb.Scored{Member: "ada", Score: 3}, tessaridb.Scored{Member: "bob", Score: 1})
+top, err := cache.ScoresRange("board", -3, -1) // the three highest, lowest first
+```
+
 ## A vault, and its passphrase
 
 A vault (`DEFINE VAULT`) keeps `SECRET` fields encrypted in every copy that is not a
