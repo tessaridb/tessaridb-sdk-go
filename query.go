@@ -33,6 +33,12 @@ const (
 	NotASpan RefusalReason = "not-a-span"
 	// NotAnAnswerer: an ANSWERED BY that is neither ANY nor LEADER.
 	NotAnAnswerer RefusalReason = "not-an-answerer"
+	// NotAStoreKind: a store word that is neither row nor column (§4.11).
+	NotAStoreKind RefusalReason = "not-a-store-kind"
+	// NotAPartitionCount: a partition count below one (§4.11).
+	NotAPartitionCount RefusalReason = "not-a-partition-count"
+	// PartitionsWithoutStore: PARTITIONS beside a store other than column (§4.11).
+	PartitionsWithoutStore RefusalReason = "partitions-without-store"
 )
 
 // The grammatical positions a name can occupy, as the contract words them.
@@ -60,6 +66,12 @@ func (e *BuilderError) Error() string {
 			" is not a span — write digits and one of ns, us, ms, s, m, h, d, w, as in \"30s\""
 	case NotAnAnswerer:
 		return "tessaridb: " + strconv.Quote(e.Name) + " is not an answerer — write ANY or LEADER"
+	case NotAStoreKind:
+		return "tessaridb: " + strconv.Quote(e.Name) + " is not a store kind — write row or column"
+	case NotAPartitionCount:
+		return "tessaridb: " + e.Name + " is not a partition count — write a whole number from 1 up"
+	case PartitionsWithoutStore:
+		return "tessaridb: partitions ride only a column store — write store column beside them"
 	}
 	return "tessaridb: " + strconv.Quote(e.Name) + " is not a name, in " + e.What
 }
