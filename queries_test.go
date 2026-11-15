@@ -215,6 +215,30 @@ func statementOf(t *testing.T, build map[string]json.RawMessage) built {
 				statement.Set(name, valueOf(t, value))
 			}
 			return statement
+		case "define_table":
+			var w struct {
+				Table      string            `json:"table"`
+				Columns    map[string]string `json:"columns"`
+				Store      string            `json:"store"`
+				Partitions *struct {
+					Count uint64 `json:"count"`
+					By    string `json:"by"`
+				} `json:"partitions"`
+			}
+			if err := json.Unmarshal(body, &w); err != nil {
+				t.Fatalf("a define_table: %v", err)
+			}
+			statement := DefineTable(w.Table)
+			for name, kind := range w.Columns {
+				statement.Column(name, kind)
+			}
+			if w.Store != "" {
+				statement.Store(w.Store)
+			}
+			if w.Partitions != nil {
+				statement.Partitions(w.Partitions.Count, w.Partitions.By)
+			}
+			return statement
 		default:
 			t.Fatalf("the corpus used a statement this reader does not know: %s", tag)
 		}
